@@ -1,4 +1,12 @@
-# Google Maps Automotive for MicroG-RE on BYD cars
+# Google Maps Automotive for MicroG-RE — API 29 fork
+
+> **Fork note.** This fork also accepts an original AAOS Google Maps APK built for Android 10 (`minSdkVersion` 29),
+> not only 26.10.120003.E (`minSdkVersion` 30). With a minSdk 29 APK the Android 11 → 10 rewrites are skipped (that
+> build already runs on Android 10), and the comfort hooks (UI density, language, driver side, color scheme, cluster,
+> Settings rows) are skipped with a warning in the patch log if they do not match the older code. For a first try,
+> turn off the separate patches (BYD battery, BYD navigation volume, BYD location flicker fix, Send to car,
+> 3D buildings) and patch with "Google Maps Automotive for MicroG-RE" only. Built by `.github/workflows/build.yml`.
+
 
 Google Maps Automotive on a BYD DiLink 3 head unit (Android 10) with [MicroG-RE 7.3.0](https://github.com/MorpheApp/MicroG-RE/releases/tag/7.3.0). The patched app, **Maps**, installs alongside phone Google Maps. This repository publishes `.mpp` bundles only; bring your own original APK.
 
