@@ -73,7 +73,8 @@ private const val MAIN_CLASS = "Lcom/google/android/maps/MapsActivity;"
 private const val MAIN_ACTIVITY_NAME = "com.google.android.maps.MapsActivity"
 private const val APPLICATION_NAME = "com.google.android.apps.gmm.car.embedded.app.EmbeddedGoogleMapsApplication"
 internal const val APPLICATION_CLASS = "Lcom/google/android/apps/gmm/car/embedded/app/EmbeddedGoogleMapsApplication;"
-private const val INPUT_MIN_SDK = "30"
+// Fork: 120003.E is minSdk 30; older AAOS Maps builds for Android 10 are minSdk 29 (see InputApk.kt).
+private val INPUT_MIN_SDKS = setOf("29", "30")
 private const val OUTPUT_MIN_SDK = "29"
 private const val AUTOMOTIVE_FEATURE = "android.hardware.type.automotive"
 private const val GMS_VERSION_METADATA = "com.google.android.gms.version"
@@ -180,34 +181,49 @@ val automotiveMicroGPatch = bytecodePatch(
         IncludedFeatures.settingsRows += LANGUAGE_CLASS
         IncludedFeatures.settingsRows += DRIVER_SIDE_CLASS
         IncludedFeatures.settingsRows += COLOR_SCHEME_CLASS
+        // Required on every input: MicroG-RE routing, the extension runtime and crash log, no android.car.
         rewriteGmsCoreStrings()
-        patchLocationServiceAction()
         patchExtensionRuntime()
         patchAvailabilityChecks()
         patchPatchesReleaseVersion()
         injectExtensionContext()
         injectGmsCoreCheck()
-        injectNavigationTtsWarmup()
-        injectWindowRefresh()
-        redirectApiModelOutlines()
-        replaceWindowBoundsCalls()
-        replaceInstallSourceCalls()
-        replaceCloseGuardCalls()
-        replacePercentFormatChains()
-        guardInsetsAnimationCallbackSetter()
         guardCarCreation()
-        skipSystemUserExit()
-        applyUiDensity()
-        useDriverSide()
-        useColorScheme()
-        useCarColorsOnCluster()
-        useCarSatelliteOnCluster()
+        // Required on 120003.E, lenient on a minSdk 29 input (fork, InputApk.kt).
+        optionalOnApi29("location service action") { patchLocationServiceAction() }
+        optionalOnApi29("system-user exit") { skipSystemUserExit() }
+        optionalOnApi29("navigation TTS warm-up") { injectNavigationTtsWarmup() }
+        optionalOnApi29("split-screen window refresh") { injectWindowRefresh() }
+        // Android 11 (API 30) code on Android 10: only for the minSdk 30 input.
+        api30OnlyStep("API 30 outlines") { redirectApiModelOutlines() }
+        api30OnlyStep("window bounds calls") { replaceWindowBoundsCalls() }
+        api30OnlyStep("install source calls") { replaceInstallSourceCalls() }
+        api30OnlyStep("CloseGuard calls") { replaceCloseGuardCalls() }
+        api30OnlyStep("percent format chains") { replacePercentFormatChains() }
+        api30OnlyStep("insets animation callback") { guardInsetsAnimationCallbackSetter() }
+        // Comfort features: their Settings rows are dropped when their hooks are skipped.
+        if (!optionalOnApi29("UI density and language") { applyUiDensity() }) {
+            IncludedFeatures.settingsRows -= UI_DENSITY_CLASS
+            IncludedFeatures.settingsRows -= LANGUAGE_CLASS
+        }
+        if (!optionalOnApi29("driver side") { useDriverSide() }) IncludedFeatures.settingsRows -= DRIVER_SIDE_CLASS
+        if (!optionalOnApi29("color scheme") { useColorScheme() }) IncludedFeatures.settingsRows -= COLOR_SCHEME_CLASS
+        optionalOnApi29("cluster colors") { useCarColorsOnCluster() }
+        optionalOnApi29("cluster satellite") { useCarSatelliteOnCluster() }
     }
 
     finalize {
-        addSettingsRows(IncludedFeatures.settingsRows + REPORT_CLASS + UPDATE_CHECK_CLASS)
-        startSafeMode()
+        optionalOnApi29("Settings rows") {
+            addSettingsRows(IncludedFeatures.settingsRows + REPORT_CLASS + UPDATE_CHECK_CLASS)
+        }
+        optionalOnApi29("safe mode start") { startSafeMode() }
         writeIncludedFeatures(IncludedFeatures.features)
+        if (InputApk.isApi29) {
+            inputApkLogger.info(
+                "API 29 input done. Skipped optional steps: " +
+                    InputApk.skippedSteps.ifEmpty { listOf("none") }.joinToString(),
+            )
+        }
     }
 }
 
@@ -341,9 +357,14 @@ private fun requireAutomotiveInput(manifest: Element): Element {
     val usesSdk = manifest.directChildren("uses-sdk").singleOrNull()
         ?: throw PatchException("Expected one uses-sdk element in the AAOS Maps manifest")
     val minSdk = usesSdk.getAttribute("android:minSdkVersion")
-    if (minSdk != INPUT_MIN_SDK) {
-        throw PatchException("Expected the AAOS Maps build with minSdk $INPUT_MIN_SDK, found '$minSdk'")
+    if (minSdk !in INPUT_MIN_SDKS) {
+        throw PatchException("Expected the AAOS Maps build with minSdk ${INPUT_MIN_SDKS.joinToString(" or ")}, found '$minSdk'")
     }
+    InputApk.reset(minSdk.toInt())
+    logger.info(
+        if (InputApk.isApi29) "Input is an AAOS Maps build for Android 10 (minSdk 29): API 30 rewrites off, optional hooks lenient"
+        else "Input is an AAOS Maps build with minSdk 30 (120003.E path)",
+    )
 
     val application = manifest.directChildren("application").singleOrNull()
         ?: throw PatchException("Expected one application element")
@@ -940,7 +961,16 @@ private fun BytecodePatchContext.patchAvailabilityChecks() {
                 reference.parameterTypes.map { type -> type.toString() } == listOf("Ljava/lang/String;", "I")
         } == true
     }
-    if (versionReads != 1 || packageLookups < 1 || method.implementation!!.registerCount < 1) {
+    if (InputApk.isApi29 && method.implementation!!.registerCount >= 1 &&
+        (versionReads != 1 || packageLookups < 1)
+    ) {
+        // Older builds may not have GooglePlayServicesUtilLight inlined here; the (Context, int)I check of the
+        // class that posts the availability notification is still the one to answer SUCCESS (0).
+        logger.warning(
+            "API 29 input: availability check $method has version reads=$versionReads, " +
+                "package lookups=$packageLookups (not inlined); patching it anyway",
+        )
+    } else if (versionReads != 1 || packageLookups < 1 || method.implementation!!.registerCount < 1) {
         throw PatchException(
             "Unexpected availability check: $method; version reads=$versionReads, package lookups=$packageLookups",
         )
