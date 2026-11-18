@@ -6,6 +6,10 @@
 > Settings rows) are skipped with a warning in the patch log if they do not match the older code. For a first try,
 > turn off the separate patches (BYD battery, BYD navigation volume, BYD location flicker fix, Send to car,
 > 3D buildings) and patch with "Google Maps Automotive for MicroG-RE" only. Built by `.github/workflows/build.yml`.
+>
+> **MicroG-RE keep-alive** (fork patch, on by default, ported from otonieru/gmaps-patches-omoda): starts MicroG-RE
+> with Maps, holds an important binding to its location service while Maps runs and re-binds within a minute if the
+> head unit kills it. Still run `adb shell dumpsys deviceidle whitelist +app.revanced.android.gms` once.
 
 
 Google Maps Automotive on a BYD DiLink 3 head unit (Android 10) with [MicroG-RE 7.3.0](https://github.com/MorpheApp/MicroG-RE/releases/tag/7.3.0). The patched app, **Maps**, installs alongside phone Google Maps. This repository publishes `.mpp` bundles only; bring your own original APK.
